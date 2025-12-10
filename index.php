@@ -6,8 +6,7 @@ require __DIR__ . '/PHPMailer/Exception.php';
 require __DIR__ . '/PHPMailer/PHPMailer.php';
 require __DIR__ . '/PHPMailer/SMTP.php';
 
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception;
+use PHPMailer\PHPMailer\PHPMailer; use PHPMailer\PHPMailer\Exception;
 
 // .env dosyasını oku (parse_ini_file ile)
 $env = parse_ini_file(__DIR__ . '/.env', false, INI_SCANNER_RAW);
@@ -36,40 +35,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $subject    = temizle($_POST['subject']    ?? '');
     $message    = temizle($_POST['message']    ?? '');
 
+    // IP onay kutusu (işaretlendiyse 1 gelir)
+    $ipConsent = isset($_POST['ipConsent']) ? 1 : 0;
+
+    // Kullanıcının IP adresini al
+    function getUserIp()
+    {
+        $ipKeys = [
+            'HTTP_CLIENT_IP',
+            'HTTP_X_FORWARDED_FOR',
+            'HTTP_X_FORWARDED',
+            'HTTP_X_CLUSTER_CLIENT_IP',
+            'HTTP_FORWARDED_FOR',
+            'HTTP_FORWARDED',
+            'REMOTE_ADDR'
+        ];
+
+        foreach ($ipKeys as $key) {
+            if (!empty($_SERVER[$key])) {
+                $ipList = explode(',', $_SERVER[$key]);
+                $ip = trim($ipList[0]);
+                if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                    return $ip;
+                }
+            }
+        }
+
+        return 'Bilinmiyor';
+    }
+
+    $userIp = getUserIp();
+
     $email = filter_var($emailRaw, FILTER_VALIDATE_EMAIL);
 
-$phoneStr   = trim($phone);
-$phoneDigits = preg_replace('/\D+/', '', $phoneStr); // sadece rakamlar
+    // Telefon alanı opsiyonel:
+    // - Hiç rakam yoksa veya çok az rakam varsa "boş" kabul et
+    // - Yeterince rakam varsa genel bir format kontrolü yap
+    $phoneStr    = trim($phone);
+    $phoneDigits = preg_replace('/\\D+/', '', $phoneStr); // sadece rakamlar
 
-// Eğer hiç rakam yoksa veya 4'ten az rakam varsa -> hiç yazmamış gibi davran (hata üretme)
-if ($phoneDigits !== '' && strlen($phoneDigits) >= 4) {
-    // Burada genel bir kontrol yapıyoruz:
-    // Başta isteğe bağlı +, 1–3 haneli ülke kodu, sonrasında boşluk/rakam/parantez/çizgi karışımı en az 4 karakter
-    if (!preg_match('/^\+?\d{1,3}[\s\d\-()]{4,}$/', $phoneStr)) {
-        $errors[] = 'Geçerli bir telefon numarası girin.';
+    // Eğer hiç rakam yoksa veya 4'ten az rakam varsa -> hiç yazmamış gibi davran (hata üretme)
+    if ($phoneDigits !== '' && strlen($phoneDigits) >= 4) {
+        // Başta isteğe bağlı +, 1–3 haneli ülke kodu, sonrasında boşluk/rakam/parantez/çizgi karışımı en az 4 karakter
+        if (!preg_match('/^\\+?\\d{1,3}[\\s\\d\\-()]{4,}$/', $phoneStr)) {
+            $errors[] = 'Geçerli bir telefon numarası girin.';
+        }
     }
-}
 
-
-if (!$fullName) {
-    $errors[] = 'Lütfen ad soyad girin.';
-}
-if (!$email) {
-    $errors[] = 'Geçerli bir e-posta adresi girin.';
-}
-// Konu min. 5 karakter
-if (!$subject || mb_strlen($subject) < 5) {
-    $errors[] = 'Konu en az 5 karakter olmalıdır.';
-}
-// Mesaj min. 10 karakter
-if (!$message || mb_strlen($message) < 10) {
-    $errors[] = 'Mesaj en az 10 karakter olmalıdır.';
-}
-
-// Telefon doluysa: +ülkeKodu ve en az birkaç rakam (genel kontrol, tüm ülkeler için)
-if (!empty($phoneNormalized) && !preg_match('/^\+\d{1,3}[\s\d\-()]{4,}$/', $phoneNormalized)) {
-    $errors[] = 'Geçerli bir telefon numarası girin.';
-}
+    if (!$fullName) {
+        $errors[] = 'Lütfen ad soyad girin.';
+    }
+    if (!$email) {
+        $errors[] = 'Geçerli bir e-posta adresi girin.';
+    }
+    // Konu min. 5 karakter
+    if (!$subject || mb_strlen($subject) < 5) {
+        $errors[] = 'Konu en az 5 karakter olmalıdır.';
+    }
+    // Mesaj min. 10 karakter
+    if (!$message || mb_strlen($message) < 10) {
+        $errors[] = 'Mesaj en az 10 karakter olmalıdır.';
+    }
+    // IP adresi paylaşımı onayı zorunlu
+    if (!$ipConsent) {
+        $errors[] = 'Devam edebilmek için IP adresinizin bu formda kaydedilmesini onaylamalısınız.';
+    }
 
     if (empty($errors)) {
         $mail = new PHPMailer(true);
@@ -107,11 +137,13 @@ if (!empty($phoneNormalized) && !preg_match('/^\+\d{1,3}[\s\d\-()]{4,}$/', $phon
             $mail->isHTML(false);
             $mail->Subject = 'Web İletişim Formu: ' . $subject;
 
-            $body  = "Ad Soyad: {$fullName}\n";
-            $body .= "E-posta: {$emailRaw}\n";
-            $body .= "Telefon: {$phone}\n";
-            $body .= "Konu: {$subject}\n\n";
-            $body .= "Mesaj:\n{$message}\n";
+            $body  = "Ad Soyad: {$fullName}\\n";
+            $body .= "E-posta: {$emailRaw}\\n";
+            $body .= "Telefon: {$phone}\\n";
+            $body .= "Konu: {$subject}\\n\\n";
+            $body .= "Mesaj:\\n{$message}\\n\\n";
+            $body .= "-----------------------------\\n";
+            $body .= "Gönderim IP Adresi: {$userIp}\\n";
 
             $mail->Body = $body;
 
@@ -532,109 +564,108 @@ if (!empty($phoneNormalized) && !preg_match('/^\+\d{1,3}[\s\d\-()]{4,}$/', $phon
         }
 
         /* === Mobil uyum iyileştirmeleri === */
-@media (max-width: 640px) {
-    body {
-        padding: 12px;
-        align-items: stretch;
-    }
+        @media (max-width: 640px) {
+            body {
+                padding: 12px;
+                align-items: stretch;
+            }
 
-    .container {
-        max-width: 100%;
-        padding: 16px 14px 20px;
-        border-radius: 12px;
-        box-shadow: 0 14px 30px -18px rgba(15, 23, 42, 0.9);
-    }
+            .container {
+                max-width: 100%;
+                padding: 16px 14px 20px;
+                border-radius: 12px;
+                box-shadow: 0 14px 30px -18px rgba(15, 23, 42, 0.9);
+            }
 
-    .top-bar {
-        justify-content: space-between;
-        gap: 6px;
-        margin-bottom: 10px;
-    }
+            .top-bar {
+                justify-content: space-between;
+                gap: 6px;
+                margin-bottom: 10px;
+            }
 
-    .toggle-btn,
-    .lang-btn {
-        padding: 3px 8px;
-        font-size: 0.75rem;
-    }
+            .toggle-btn,
+            .lang-btn {
+                padding: 3px 8px;
+                font-size: 0.75rem;
+            }
 
-    h1 {
-        font-size: 1.3rem;
-        gap: 6px;
-    }
-    .title-icon {
-        font-size: 1.3rem;
-    }
+            h1 {
+                font-size: 1.3rem;
+                gap: 6px;
+            }
+            .title-icon {
+                font-size: 1.3rem;
+            }
 
-    .subtitle {
-        font-size: 0.82rem;
-        margin-bottom: 1.2rem;
-    }
+            .subtitle {
+                font-size: 0.82rem;
+                margin-bottom: 1.2rem;
+            }
 
-    .field {
-        padding: 6px 8px 9px;
-        margin-bottom: 12px;
-    }
+            .field {
+                padding: 6px 8px 9px;
+                margin-bottom: 12px;
+            }
 
-    .field-header {
-        align-items: flex-start;
-        gap: 6px;
-        flex-direction: column;
-    }
+            .field-header {
+                align-items: flex-start;
+                gap: 6px;
+                flex-direction: column;
+            }
 
-    label {
-        font-size: 0.8rem;
-    }
+            label {
+                font-size: 0.8rem;
+            }
 
-    .tooltip {
-        font-size: 0.75rem;
-        padding: 1px 6px;
-    }
-    .tooltip::after {
-        max-width: 220px;
-        font-size: 0.7rem;
-    }
+            .tooltip {
+                font-size: 0.75rem;
+                padding: 1px 6px;
+            }
+            .tooltip::after {
+                max-width: 220px;
+                font-size: 0.7rem;
+            }
 
-    input,
-    textarea {
-        font-size: 0.85rem;
-        padding: 9px 10px;
-    }
+            input,
+            textarea {
+                font-size: 0.85rem;
+                padding: 9px 10px;
+            }
 
-    .helper {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 4px;
-        font-size: 0.74rem;
-    }
+            .helper {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 4px;
+                font-size: 0.74rem;
+            }
 
-    .btn {
-        margin-top: 4px;
-        padding: 10px 14px;
-        font-size: 0.9rem;
-    }
-}
+            .btn {
+                margin-top: 4px;
+                padding: 10px 14px;
+                font-size: 0.9rem;
+            }
+        }
 
-/* Çok küçük ekranlar için (eski telefonlar vs.) */
-@media (max-width: 380px) {
-    body {
-        padding: 8px;
-    }
-    .container {
-        padding: 14px 10px 18px;
-    }
-    .top-bar {
-        flex-direction: column-reverse;
-        align-items: flex-end;
-    }
-}
-
-
+        /* Çok küçük ekranlar için (eski telefonlar vs.) */
+        @media (max-width: 380px) {
+            body {
+                padding: 8px;
+            }
+            .container {
+                padding: 14px 10px 18px;
+            }
+            .top-bar {
+                flex-direction: column-reverse;
+                align-items: flex-end;
+            }
+        }
     </style>
+
     <link rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/intl-tel-input@18/build/css/intlTelInput.css">
 
-<script src="https://cdn.jsdelivr.net/npm/intl-tel-input@18/build/js/intlTelInput.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/intl-tel-input@18/build/js/utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/intl-tel-input@18/build/js/intlTelInput.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/intl-tel-input@18/build/js/utils.js"></script>
 
 </head>
 <body>
@@ -721,44 +752,40 @@ if (!empty($phoneNormalized) && !preg_match('/^\+\d{1,3}[\s\d\-()]{4,}$/', $phon
                 value="<?php echo htmlspecialchars($emailRaw ?? '', ENT_QUOTES, 'UTF-8'); ?>"
                 placeholder="ornek@mail.com"
                 data-i18n-placeholder="ph_email"
-                pattern="^[^\s@]+@[^\s@]+\.[^\s@]+$"
+                pattern="^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$"
             >
         </div>
 
-<div class="field" data-field="phone">
-    <div class="field-header">
-        <label for="phone">
-            <span class="label-icon">📞</span>
-            <span class="label-text" data-i18n="label_phone">Telefon Numarası</span>
-            <span style="font-size:0.75rem; opacity:0.75;" data-i18n="label_optional">(opsiyonel)</span>
-        </label>
+        <div class="field" data-field="phone">
+            <div class="field-header">
+                <label for="phone">
+                    <span class="label-icon">📞</span>
+                    <span class="label-text" data-i18n="label_phone">Telefon Numarası</span>
+                    <span style="font-size:0.75rem; opacity:0.75;" data-i18n="label_optional">(opsiyonel)</span>
+                </label>
 
-        <div style="display:flex; align-items:center; gap:8px;">
-            <span id="countryDisplay"
-                  style="font-size:0.78rem; opacity:0.85;">
-                🇹🇷 Türkiye (+90)
-            </span>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span id="countryDisplay"
+                          style="font-size:0.78rem; opacity:0.85;">
+                        🇹🇷 Türkiye (+90)
+                    </span>
 
-            <span class="tooltip"
-                  data-tooltip="+90 5xx xxx xx xx formatında mobil numara yazabilirsiniz."
-                  data-tooltip-en="You can enter a mobile number in +90 5xx xxx xx xx format.">?</span>
+                    <span class="tooltip"
+                          data-tooltip="+90 5xx xxx xx xx formatında mobil numara yazabilirsiniz."
+                          data-tooltip-en="You can enter a mobile number in +90 5xx xxx xx xx format.">?</span>
+                </div>
+            </div>
+
+            <input
+                type="tel"
+                id="phone"
+                name="phone"
+                autocomplete="tel"
+                value="<?php echo htmlspecialchars($phone ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                placeholder="+90 5xx xxx xx xx"
+                data-i18n-placeholder="ph_phone"
+            >
         </div>
-    </div>
-
-    <input
-        type="tel"
-        id="phone"
-        name="phone"
-        autocomplete="tel"
-        value="<?php echo htmlspecialchars($phone ?? '', ENT_QUOTES, 'UTF-8'); ?>"
-        placeholder="+90 5xx xxx xx xx"
-        data-i18n-placeholder="ph_phone"
-    >
-</div>
-
-
-
-
 
         <div class="field" data-field="subject">
             <div class="field-header">
@@ -793,6 +820,7 @@ if (!empty($phoneNormalized) && !preg_match('/^\+\d{1,3}[\s\d\-()]{4,}$/', $phon
                       data-tooltip="İhtiyacınızı kısaca ama anlaşılır biçimde açıklayın (en az 10 karakter)."
                       data-tooltip-en="Briefly explain what you need (at least 10 characters).">?</span>
             </div>
+
             <textarea
                 id="message"
                 name="message"
@@ -806,7 +834,32 @@ if (!empty($phoneNormalized) && !preg_match('/^\+\d{1,3}[\s\d\-()]{4,}$/', $phon
             </div>
         </div>
 
-        <button type="submit" class="btn" id="submitBtn">
+        <div class="field" data-field="ipConsent">
+            <div class="field-header">
+                <label for="ipConsent" style="align-items:flex-start;">
+                    <input
+                        type="checkbox"
+                        id="ipConsent"
+                        name="ipConsent"
+                        value="1"
+                        style="margin-right:8px; margin-top:2px;"
+                        <?php echo isset($_POST['ipConsent']) ? 'checked' : ''; ?>
+                    >
+                    <span>
+                        <span class="label-text" data-i18n="ip_consent_label">
+                            Bu formu gönderirken IP adresimin güvenlik ve kötüye kullanımın önlenmesi amacıyla kaydedilmesini kabul ediyorum.
+                        </span>
+                    </span>
+                </label>
+            </div>
+            <div class="helper">
+                <span data-i18n="ip_consent_helper">
+                    IP adresiniz yalnızca bu form gönderimiyle ilişkili güvenlik kayıtlarında ve olası kötüye kullanım incelemelerinde kullanılacaktır.
+                </span>
+            </div>
+        </div>
+
+        <button type="submit" class="btn" id="submitBtn" disabled>
             <span class="btn-inner">
                 <span class="btn-spinner" aria-hidden="true"></span>
                 <span class="btn-label" data-i18n="submit_text">Mesajı Gönder</span>
@@ -817,65 +870,59 @@ if (!empty($phoneNormalized) && !preg_match('/^\+\d{1,3}[\s\d\-()]{4,}$/', $phon
 
 <script>
 (function () {
-// ==== Tema (sistem tercihine göre otomatik + kullanıcı override) ====
-const themeToggle = document.getElementById('themeToggle');
-const themeIcon = document.getElementById('themeIcon');
+    /* =========================
+       1) Tema (dark/light)
+       ========================= */
+    const themeToggle = document.getElementById('themeToggle');
+    const themeIcon = document.getElementById('themeIcon');
 
-// Sistem temasını dinle
-const mql = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+    const mql = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+    let storedTheme = localStorage.getItem('theme'); // 'dark' | 'light' | null
+    let theme;
+    let hasManualPreference = !!storedTheme;
 
-// localStorage'da kullanıcı tercihi var mı?
-let storedTheme = localStorage.getItem('theme'); // 'dark' | 'light' | null
-let theme;
-let hasManualPreference = !!storedTheme; // kullanıcı butona basmış mı basmamış mı
+    function applyTheme(next) {
+        theme = next;
+        document.body.setAttribute('data-theme', theme);
+        themeIcon.textContent = theme === 'dark' ? '🌙' : '☀️';
+    }
 
-function applyTheme(next) {
-    theme = next;
-    document.body.setAttribute('data-theme', theme);
-    themeIcon.textContent = theme === 'dark' ? '🌙' : '☀️';
-}
+    // İlk yükleme: önce kullanıcı tercihi, yoksa sistem teması
+    if (storedTheme === 'dark' || storedTheme === 'light') {
+        applyTheme(storedTheme);
+    } else {
+        const prefersDark = mql && mql.matches;
+        applyTheme(prefersDark ? 'dark' : 'light');
+    }
 
-// İlk yüklemede:
-// - Eğer kullanıcı daha önce seçim yaptıysa onu kullan,
-// - Yapmadıysa sistem (OS/tarayıcı) temasını kullan
-if (storedTheme === 'dark' || storedTheme === 'light') {
-    applyTheme(storedTheme);
-} else {
-    const prefersDark = mql && mql.matches;
-    applyTheme(prefersDark ? 'dark' : 'light');
-}
+    // Sistem teması değişirse ve kullanıcı elle değiştirmediyse otomatik uyum sağla
+    if (mql && mql.addEventListener) {
+        mql.addEventListener('change', (e) => {
+            if (!hasManualPreference) {
+                applyTheme(e.matches ? 'dark' : 'light');
+            }
+        });
+    } else if (mql && mql.addListener) {
+        mql.addListener((e) => {
+            if (!hasManualPreference) {
+                applyTheme(e.matches ? 'dark' : 'light');
+            }
+        });
+    }
 
-// Sistem teması değişirse (gece moduna geçti vs.)
-// ama kullanıcı bizde manuel bir seçim yapmadıysa, otomatik uyum sağla
-if (mql && mql.addEventListener) {
-    mql.addEventListener('change', (e) => {
-        if (!hasManualPreference) {
-            applyTheme(e.matches ? 'dark' : 'light');
-        }
-    });
-} else if (mql && mql.addListener) { 
-    // Eski browserlar için
-    mql.addListener((e) => {
-        if (!hasManualPreference) {
-            applyTheme(e.matches ? 'dark' : 'light');
-        }
-    });
-}
+    // Kullanıcı butona basarsa manuel tercih geçerli olsun
+    if (themeToggle) {
+        themeToggle.addEventListener('click', () => {
+            const next = theme === 'dark' ? 'light' : 'dark';
+            hasManualPreference = true;
+            localStorage.setItem('theme', next);
+            applyTheme(next);
+        });
+    }
 
-// Kullanıcı butona basarsa:
-// - Manuel tercih kaydet
-// - Sistem değişikliklerini artık dinlemeyiz
-if (themeToggle) {
-    themeToggle.addEventListener('click', () => {
-        const next = theme === 'dark' ? 'light' : 'dark';
-        hasManualPreference = true;
-        localStorage.setItem('theme', next);
-        applyTheme(next);
-    });
-}
-
-
-    // ==== Dil ====
+    /* =========================
+       2) Dil / çeviriler
+       ========================= */
     const langButtons = document.querySelectorAll('[data-lang-btn]');
     const translations = {
         tr: {
@@ -897,6 +944,8 @@ if (themeToggle) {
             ph_phone: '+90 5xx xxx xx xx',
             ph_subject: 'Mesajınızın konusu',
             ph_message: 'Bize iletmek istediğiniz mesajı yazın...',
+            ip_consent_label: 'Bu formu gönderirken IP adresimin güvenlik ve kötüye kullanımın önlenmesi amacıyla kaydedilmesini kabul ediyorum.',
+            ip_consent_helper: 'IP adresiniz yalnızca bu form gönderimiyle ilişkili güvenlik kayıtlarında ve olası kötüye kullanım incelemelerinde kullanılacaktır.'
         },
         en: {
             heading: 'Get in Touch',
@@ -917,8 +966,11 @@ if (themeToggle) {
             ph_phone: '+90 5xx xxx xx xx',
             ph_subject: 'Subject of your message',
             ph_message: 'Write the message you want to send us...',
+            ip_consent_label: 'I agree that my IP address will be stored for security and abuse prevention purposes when submitting this form.',
+            ip_consent_helper: 'Your IP address will only be used in security logs and abuse investigations related to this form submission.'
         }
     };
+
     const errorMap = {
         'Lütfen ad soyad girin.': {
             en: 'Please enter your full name.'
@@ -934,6 +986,9 @@ if (themeToggle) {
         },
         'Geçerli bir telefon numarası girin.': {
             en: 'Please enter a valid phone number.'
+        },
+        'Devam edebilmek için IP adresinizin bu formda kaydedilmesini onaylamalısınız.': {
+            en: 'To continue, you must agree that your IP address will be stored for this form.'
         }
     };
 
@@ -942,40 +997,44 @@ if (themeToggle) {
     function applyLang(nextLang) {
         lang = nextLang;
         localStorage.setItem('lang', lang);
+
         langButtons.forEach(btn => {
             btn.classList.toggle('active', btn.dataset.langBtn === lang);
         });
 
         const dict = translations[lang];
+
+        // Başlıklar / label metinleri
         document.querySelectorAll('[data-i18n]').forEach(el => {
             const key = el.getAttribute('data-i18n');
             if (dict[key]) el.textContent = dict[key];
         });
+
+        // Placeholder'lar
         document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
             const key = el.getAttribute('data-i18n-placeholder');
             if (dict[key]) el.setAttribute('placeholder', dict[key]);
         });
-// tooltips
-document.querySelectorAll('.tooltip').forEach(el => {
-    // İlk seferde mevcut Türkçe değeri yedekle
-    if (!el.dataset.tooltipTr && el.getAttribute('data-tooltip')) {
-        el.dataset.tooltipTr = el.getAttribute('data-tooltip'); // data-tooltip-tr
-    }
 
-    const trText = el.dataset.tooltipTr || '';
-    const enText = el.getAttribute('data-tooltip-en') || '';
+        // Tooltips (TR metni cache'leniyor)
+        document.querySelectorAll('.tooltip').forEach(el => {
+            if (!el.dataset.tooltipTr && el.getAttribute('data-tooltip')) {
+                el.dataset.tooltipTr = el.getAttribute('data-tooltip');
+            }
 
-    // Aktif dile göre hangi metin gösterilecek
-    const text = (lang === 'en')
-        ? (enText || trText)   // EN yoksa TR göster
-        : (trText || enText); // TR yoksa EN göster
+            const trText = el.dataset.tooltipTr || '';
+            const enText = el.getAttribute('data-tooltip-en') || '';
 
-    if (text) {
-        el.setAttribute('data-tooltip', text); // CSS hâlâ buradan okuyor
-    }
-});
+            const text = (lang === 'en')
+                ? (enText || trText)
+                : (trText || enText);
 
-        // hata mesajlarını çevir
+            if (text) {
+                el.setAttribute('data-tooltip', text);
+            }
+        });
+
+        // Hata mesajlarını İngilizceye çevir (tek yön)
         if (lang === 'en') {
             document.querySelectorAll('.error-item').forEach(li => {
                 const trText = li.textContent.trim();
@@ -994,12 +1053,15 @@ document.querySelectorAll('.tooltip').forEach(el => {
         });
     });
 
-    // ==== Mesaj karakter sayacı ====
+    /* =========================
+       3) Mesaj karakter sayacı
+       ========================= */
     const messageEl = document.getElementById('message');
     const charCount = document.getElementById('charCount');
     const MIN_MESSAGE = 10;
 
     function updateCharCount() {
+        if (!messageEl || !charCount) return;
         const len = messageEl.value.length;
         const base = lang === 'en'
             ? `Characters: ${len} / min ${MIN_MESSAGE}`
@@ -1007,147 +1069,150 @@ document.querySelectorAll('.tooltip').forEach(el => {
         charCount.textContent = base;
         charCount.classList.toggle('invalid', len > 0 && len < MIN_MESSAGE);
     }
+
     if (messageEl && charCount) {
         updateCharCount();
         messageEl.addEventListener('input', updateCharCount);
     }
- // ==== intl-tel-input ile tüm dünya ülke kodları + ülke adı ====
-const phoneInput = document.getElementById('phone');
-const countryDisplay = document.getElementById('countryDisplay');
-let iti = null;
 
-if (phoneInput && window.intlTelInput) {
-    iti = window.intlTelInput(phoneInput, {
-        initialCountry: "tr",            // ilk açılışta Türkiye
-        preferredCountries: ["tr", "us", "gb", "de", "fr"],
-        nationalMode: true,              // input içine + yazmak zorunda değilsin
-        separateDialCode: false,
-        utilsScript: "https://cdn.jsdelivr.net/npm/intl-tel-input@18/build/js/utils.js"
-    });
+    /* =========================
+       4) intl-tel-input & ülke algılama
+       ========================= */
+    const phoneInput = document.getElementById('phone');
+    const countryDisplay = document.getElementById('countryDisplay');
+    let iti = null;
 
-    // Sayfa açıldığında input boşsa varsayılan +90 yaz
-    if (!phoneInput.value.trim()) {
-        phoneInput.value = "+90 ";
-    }
-
-    // Tüm ülke datasını al (intl-tel-input kendisi sağlıyor)
-    const allCountries = window.intlTelInputGlobals
-        ? window.intlTelInputGlobals.getCountryData()
-        : [];
-
-    // Kullanıcının yazdığı rakamlardan ülke tespiti
-    function detectCountryFromDigits() {
-        if (!allCountries.length) return;
-
-        const raw = phoneInput.value || '';
-        const digits = raw.replace(/\D/g, '');   // sadece rakamlar
-
-        if (!digits) return;
-
-        // En uzun eşleşen ülke kodunu bul (ör: 49, 491 değil)
-        let bestMatch = null;
-        allCountries.forEach(c => {
-            if (!c.dialCode) return;
-            if (digits.startsWith(c.dialCode)) {
-                if (!bestMatch || c.dialCode.length > bestMatch.dialCode.length) {
-                    bestMatch = c;
-                }
-            }
+    if (phoneInput && window.intlTelInput) {
+        iti = window.intlTelInput(phoneInput, {
+            initialCountry: "tr",
+            preferredCountries: ["tr", "us", "gb", "de", "fr"],
+            nationalMode: true,
+            separateDialCode: false,
+            utilsScript: "https://cdn.jsdelivr.net/npm/intl-tel-input@18/build/js/utils.js"
         });
 
-        if (bestMatch) {
-            // Örn: digits "49..." ile başlıyorsa -> "de" seç (Almanya)
-            iti.setCountry(bestMatch.iso2);
+        // İlk açılışta bir şey yoksa +90 yaz
+        if (!phoneInput.value.trim()) {
+            phoneInput.value = "+90 ";
         }
-    }
 
-    function updateCountryDisplayFromIti() {
-        if (!iti || !countryDisplay) return;
-        const data = iti.getSelectedCountryData();
-        if (!data) return;
+        const allCountries = window.intlTelInputGlobals
+            ? window.intlTelInputGlobals.getCountryData()
+            : [];
 
-        // ISO2 kodundan emoji bayrak üret (örn: "tr" -> 🇹🇷)
-        const iso = (data.iso2 || "").toUpperCase();
-        const flagEmoji = iso
-            ? String.fromCodePoint(...[...iso].map(c => 0x1F1E6 - 65 + c.charCodeAt(0)))
-            : "🌐";
+        function detectCountryFromDigits() {
+            if (!allCountries.length) return;
+            const raw = phoneInput.value || '';
+            const digits = raw.replace(/\\D/g, '');
+            if (!digits) return;
 
-        const name = data.name; // intl-tel-input İngilizce isim veriyor
-        countryDisplay.textContent = `${flagEmoji} ${name} (+${data.dialCode})`;
-    }
+            let bestMatch = null;
+            allCountries.forEach(c => {
+                if (!c.dialCode) return;
+                if (digits.startsWith(c.dialCode)) {
+                    if (!bestMatch || c.dialCode.length > bestMatch.dialCode.length) {
+                        bestMatch = c;
+                    }
+                }
+            });
 
-    // Ülke dropdown’dan değişince de yazıyı güncelle
-    phoneInput.addEventListener("countrychange", updateCountryDisplayFromIti);
+            if (bestMatch) {
+                iti.setCountry(bestMatch.iso2);
+            }
+        }
 
-phoneInput.addEventListener("input", (e) => {
-    let raw = e.target.value || '';
+        function updateCountryDisplayFromIti() {
+            if (!iti || !countryDisplay) return;
+            const data = iti.getSelectedCountryData();
+            if (!data) return;
 
-    // 1) Yalnızca rakamları al
-    let digits = raw.replace(/\D/g, '');
+            const iso = (data.iso2 || "").toUpperCase();
+            const flagEmoji = iso
+                ? String.fromCodePoint(...[...iso].map(c => 0x1F1E6 - 65 + c.charCodeAt(0)))
+                : "🌐";
 
-    // 2) Maksimum 15 rakamla sınırla (E.164 üst limiti)
-    const MAX_DIGITS = 15;
-    if (digits.length > MAX_DIGITS) {
-        digits = digits.slice(0, MAX_DIGITS);
-    }
+            const name = data.name;
+            countryDisplay.textContent = `${flagEmoji} ${name} (+${data.dialCode})`;
+        }
 
-    // 3) Input’a geri yaz (çok basit bir formatta)
-    // İstersen başta + varsa koruyabiliriz; şu an sadece rakamları basıyoruz:
-    e.target.value = digits;
+        phoneInput.addEventListener("countrychange", updateCountryDisplayFromIti);
 
-    // 4) Rakamların başına göre ülkeyi tespit et
-    detectCountryFromDigits();
+        phoneInput.addEventListener("input", (e) => {
+            let raw = e.target.value || '';
+            let digits = raw.replace(/\\D/g, '');
 
-    // 5) Sağdaki ülke bilgisini güncelle
-    updateCountryDisplayFromIti();
-});
-
-
-    // Sayfa ilk açıldığında da ülkeyi göster
-    updateCountryDisplayFromIti();
-}
-
-// ==== Basit client-side validation + loading animasyonu ====
-const form = document.getElementById('contactForm');
-const submitBtn = document.getElementById('submitBtn');
-
-if (form && submitBtn) {
-    form.addEventListener('submit', function () {
-        submitBtn.classList.add('is-loading');
-    });
-
-    // Field bazlı odak hatası belirtimi
-    const requiredFields = ['fullName', 'email', 'subject', 'message'];
-    requiredFields.forEach(id => {
-        const input = document.getElementById(id);
-        const wrapper = document.querySelector('.field[data-field="' + id + '"]');
-        if (!input || !wrapper) return;
-
-        input.addEventListener('blur', () => {
-            const value = input.value.trim();
-            let invalid = false;
-
-            if (id === 'email') {
-                const pattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-                invalid = !pattern.test(value);
-            } else if (id === 'subject') {
-                invalid = value.length < 5;
-            } else if (id === 'message') {
-                invalid = value.length < MIN_MESSAGE;
-            } else {
-                invalid = value.length === 0;
+            const MAX_DIGITS = 15;
+            if (digits.length > MAX_DIGITS) {
+                digits = digits.slice(0, MAX_DIGITS);
             }
 
-            input.classList.toggle('input-error', invalid);
+            // Basit format: sadece rakam
+            e.target.value = digits;
+
+            detectCountryFromDigits();
+            updateCountryDisplayFromIti();
         });
 
-        input.addEventListener('input', () => {
-            input.classList.remove('input-error');
+        updateCountryDisplayFromIti();
+    }
+
+    /* =========================
+       5) Form validasyon + IP onayı
+       ========================= */
+    const form = document.getElementById('contactForm');
+    const submitBtn = document.getElementById('submitBtn');
+
+    if (form && submitBtn) {
+        const ipConsent = document.getElementById('ipConsent');
+
+        // IP onayı checkbox'ına göre gönder butonu
+        function updateSubmitState() {
+            if (!ipConsent) return;
+            const allowed = ipConsent.checked;
+            submitBtn.disabled = !allowed;
+            submitBtn.classList.toggle('btn-disabled', !allowed);
+        }
+
+        if (ipConsent) {
+            updateSubmitState();
+            ipConsent.addEventListener('change', updateSubmitState);
+        }
+
+        form.addEventListener('submit', function () {
+            submitBtn.classList.add('is-loading');
         });
-    });
-}
+
+        // Field bazlı odak hatası belirtimi
+        const requiredFields = ['fullName', 'email', 'subject', 'message'];
+        requiredFields.forEach(id => {
+            const input = document.getElementById(id);
+            const wrapper = document.querySelector('.field[data-field="' + id + '"]');
+            if (!input || !wrapper) return;
+
+            input.addEventListener('blur', () => {
+                const value = input.value.trim();
+                let invalid = false;
+
+                if (id === 'email') {
+                    const pattern = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
+                    invalid = !pattern.test(value);
+                } else if (id === 'subject') {
+                    invalid = value.length < 5;
+                } else if (id === 'message') {
+                    invalid = value.length < MIN_MESSAGE;
+                } else {
+                    invalid = value.length === 0;
+                }
+
+                input.classList.toggle('input-error', invalid);
+            });
+
+            input.addEventListener('input', () => {
+                input.classList.remove('input-error');
+            });
+        });
+    }
 })();
-
 </script>
 </body>
 </html>
